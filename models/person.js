@@ -1,6 +1,5 @@
 const mongoose = require("mongoose");
 
-// Esquema de la persona
 const personSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -10,11 +9,17 @@ const personSchema = new mongoose.Schema({
   number: {
     type: String,
     required: true,
-    minlength: [8, "El número debe tener al menos 8 caracteres"],
+    minlength: 8,
+    validate: {
+      validator: function (v) {
+        return /^\d{2,3}-\d+$/.test(v);
+      },
+      message: (props) =>
+        `${props.value} no es un número de teléfono válido. Debe tener el formato xx-xxxxxx o xxx-xxxxxx.`,
+    },
   },
 });
 
-// Transformar el formato de salida para eliminar _id y __v
 personSchema.set("toJSON", {
   transform: (document, returnedObject) => {
     returnedObject.id = returnedObject._id.toString();
