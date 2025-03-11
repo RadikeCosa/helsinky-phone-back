@@ -3,7 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
 const mongoose = require("mongoose");
-const Person = require("./models/person"); // Importar el modelo
+const Person = require("./models/person");
 
 const app = express();
 
@@ -17,25 +17,16 @@ app.use(
   morgan(":method :url :status :res[content-length] - :response-time ms :body")
 );
 
-// Conectar a MongoDB
-mongoose
-  .connect(process.env.MONGODB_URI)
-  .then(() => {
-    console.log("Connected to MongoDB");
-  })
-  .catch((error) => {
-    console.error("Error connecting to MongoDB:", error.message);
-  });
+mongoose.connect(process.env.MONGODB_URI).then(() => {
+  console.log("Connected to MongoDB");
+});
 
-// Elimina el arreglo persons, ahora usaremos la base de datos
-
-app.get("/api/info", (request, response) => {
-  Person.countDocuments().then((count) => {
-    const currentDate = new Date().toString();
-    response.send(
-      `<p>Phonebook has info for ${count} people</p><p>${currentDate}</p>`
-    );
-  });
+app.get("/api/info", async (request, response) => {
+  const count = await Person.countDocuments();
+  const currentDate = new Date().toString();
+  response.send(
+    `<p>Phonebook has info for ${count} people</p><p>${currentDate}</p>`
+  );
 });
 
 app.get("/api/persons", (request, response) => {
@@ -44,9 +35,8 @@ app.get("/api/persons", (request, response) => {
   });
 });
 
-app.get("/api/persons/:id", (request, response) => {
-  const id = request.params.id;
-  Person.findById(id)
+app.get("/api/persons/:id", (request, response, next) => {
+  Person.findById(request.params.id)
     .then((person) => {
       if (person) {
         response.json(person);
@@ -54,14 +44,11 @@ app.get("/api/persons/:id", (request, response) => {
         response.status(404).send({ error: "Person not found" });
       }
     })
-    .catch((error) => {
-      response.status(400).send({ error: "Malformatted id" });
-    });
+    .catch((error) => next(error));
 });
 
-app.delete("/api/persons/:id", (request, response) => {
-  const id = request.params.id;
-  Person.findByIdAndDelete(id)
+app.delete("/api/persons/:id", (request, response, next) => {
+  Person.findByIdAndDelete(request.params.id)
     .then((result) => {
       if (result) {
         response.status(204).end();
@@ -69,32 +56,75 @@ app.delete("/api/persons/:id", (request, response) => {
         response.status(404).json({ error: "person not found" });
       }
     })
-    .catch((error) => {
-      response.status(400).send({ error: "Malformatted id" });
-    });
+    .catch((error) => next(error));
 });
 
-app.post("/api/persons", (request, response) => {
+app.post("/api/persons", (request, response, next) => {
   const body = request.body;
 
   if (!body.name || !body.number) {
     return response.status(400).json({ error: "name or number missing" });
   }
 
-  const newPerson = new Person({
-    name: body.name,
-    number: body.number,
-  });
+  Person.findOne({ name: body.name }).then((existingPerson) => {
+    if (existingPerson) {
+      Person.findByIdAndUpdate(
+        existingPerson._id,
+        { number: body.number },
+        { new: true, runValidators: true }
+      )
+        .then((updatedPerson) => {
+          response.json(updatedPerson);
+        })
+        .catch((error) => next(error));
+    } else {
+      const newPerson = new Person({
+        name: body.name,
+        number: body.number,
+      });
 
-  newPerson
-    .save()
-    .then((savedPerson) => {
-      response.json(savedPerson);
-    })
-    .catch((error) => {
-      response.status(400).send({ error: error.message });
-    });
+      newPerson
+        .save()
+        .then((savedPerson) => {
+          response.json(savedPerson);
+        })
+        .catch((error) => next(error));
+    }
+  });
 });
+
+app.put("/api/persons/:id", (request, response, next) => {
+  const { name, number } = request.body;
+
+  const person = { name, number };
+
+  Person.findByIdAndUpdate(request.params.id, person, {
+    new: true,
+    runValidators: true,
+  })
+    .then((updatedPerson) => {
+      if (updatedPerson) {
+        response.json(updatedPerson);
+      } else {
+        response.status(404).send({ error: "Person not found" });
+      }
+    })
+    .catch((error) => next(error));
+});
+
+const errorHandler = (error, request, response, next) => {
+  console.error(error.message);
+
+  if (error.name === "CastError") {
+    return response.status(400).send({ error: "Malformatted id" });
+  } else if (error.name === "ValidationError") {
+    return response.status(400).json({ error: error.message });
+  }
+
+  next(error);
+};
+
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
